@@ -20,7 +20,7 @@ contract ERC4626Vault is ERC20 {
 
     /// @notice The base unit of the underlying token and hence vault.
     /// @dev Equal to 10 ** decimals. Used for fixed point arithmetic.
-    uint256 public immutable baseUnit;
+    uint256 internal immutable baseUnit;
 
     /// @notice Creates a new Vault that accepts a specific underlying token.
     /// @param _underlying The ERC20 compliant token the Vault should accept.
@@ -80,13 +80,28 @@ contract ERC4626Vault is ERC20 {
     /// @param to The address to receive underlying tokens corresponding to the withdrawal.
     /// @param underlyingAmount The amount of underlying tokens to withdraw.
     function withdraw(address to, uint256 underlyingAmount) external virtual returns (uint256 shares) {
-        shares = underlyingAmount.fdiv(exchangeRate(), baseUnit);
+        return _withdraw(msg.sender, to, underlyingAmount);
+    }
+
+    /// @notice Withdraw a specific amount of shares for underlying tokens on behalf of `from`.
+    /// @param from The address to redeem shares from.
+    /// @param to The address to receive underlying tokens corresponding to the withdrawal.
+    /// @param shareAmount The amount of shares to redeem for underlying tokens.
+    function withdrawFrom(address from, address to, uint256 shareAmount) external virtual returns (uint256 underlyingAmount) {
+        if (allowance[from][msg.sender] != type(uint256).max) {
+            allowance[from][msg.sender] -= shareAmount;
+        }
+        return _withdraw(from, to, shareAmount);
+    }
+
+    function _withdraw(address from, address to, uint256 underlyingAmount) internal returns (uint256 shares) {
+        shares = calculateShares(underlyingAmount);
 
         // Determine the equivalent amount of shares and burn them.
         // This will revert if the user does not have enough shares.
-        _burn(msg.sender, shares);
+        _burn(from, shares);
 
-        emit Withdraw(msg.sender, to, underlyingAmount);
+        emit Withdraw(from, to, underlyingAmount);
 
         // Withdraw from strategies if needed and transfer.
         beforeWithdraw(underlyingAmount);
@@ -98,15 +113,29 @@ contract ERC4626Vault is ERC20 {
     /// @param to The address to receive underlying tokens corresponding to the withdrawal.
     /// @param shareAmount The amount of shares to redeem for underlying tokens.
     function redeem(address to, uint256 shareAmount) external virtual returns (uint256 underlyingAmount) {
+        return _redeem(msg.sender, to, shareAmount);
+    }
 
+    /// @notice Redeem a specific amount of shares for underlying tokens.
+    /// @param from The address to redeem shares from.
+    /// @param to The address to receive underlying tokens corresponding to the withdrawal.
+    /// @param shareAmount The amount of shares to redeem for underlying tokens.
+    function redeemFrom(address from, address to, uint256 shareAmount) external virtual returns (uint256 underlyingAmount) {
+        if (allowance[from][msg.sender] != type(uint256).max) {
+            allowance[from][msg.sender] -= shareAmount;
+        }
+        return _redeem(from, to, shareAmount);
+    }
+
+    function _redeem(address from, address to, uint256 shareAmount) internal returns (uint256 underlyingAmount) {
         // Determine the equivalent amount of underlying tokens.
-        underlyingAmount = shareAmount.fmul(exchangeRate(), baseUnit);
+        underlyingAmount = calculateUnderlying(shareAmount);
 
         // Burn the provided amount of shares.
         // This will revert if the user does not have enough shares.
-        _burn(msg.sender, shareAmount);
+        _burn(from, shareAmount);
 
-        emit Withdraw(msg.sender, to, underlyingAmount);
+        emit Withdraw(from, to, underlyingAmount);
 
         // Withdraw from strategies if needed and transfer.
         beforeWithdraw(underlyingAmount);
@@ -127,6 +156,14 @@ contract ERC4626Vault is ERC20 {
     /// @return The user's Vault balance in underlying tokens.
     function balanceOfUnderlying(address user) external view returns (uint256) {
         return balanceOf[user].fmul(exchangeRate(), baseUnit);
+    }
+
+    function calculateShares(uint256 underlyingAmount) public view returns (uint256) {
+        return underlyingAmount.fdiv(exchangeRate(), baseUnit);
+    }
+
+    function calculateUnderlying(uint256 shareAmount) public view returns (uint256) {
+        return shareAmount.fmul(exchangeRate(), baseUnit);
     }
 
     /// @notice Returns the amount of underlying tokens a share can be redeemed for.
