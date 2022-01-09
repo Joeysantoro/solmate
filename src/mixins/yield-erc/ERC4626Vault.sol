@@ -63,7 +63,8 @@ contract ERC4626Vault is ERC20 {
     /// @param to The address to receive shares corresponding to the deposit
     /// @param underlyingAmount The amount of the underlying token to deposit.
     function deposit(address to, uint256 underlyingAmount) external virtual returns (uint256 shares) {
-        shares = underlyingAmount.fdiv(exchangeRate(), baseUnit);
+        shares = calculateShares(underlyingAmount);
+
         // Determine the equivalent amount of shares and mint them.
         _mint(to, shares);
 
@@ -79,27 +80,28 @@ contract ERC4626Vault is ERC20 {
     /// @notice Withdraw a specific amount of underlying tokens.
     /// @param to The address to receive underlying tokens corresponding to the withdrawal.
     /// @param underlyingAmount The amount of underlying tokens to withdraw.
-    function withdraw(address to, uint256 underlyingAmount) external virtual returns (uint256 shares) {
-        return _withdraw(msg.sender, to, underlyingAmount);
+    function withdraw(address to, uint256 underlyingAmount) external virtual returns (uint256 shareAmount) {
+        shareAmount = calculateShares(underlyingAmount);
+        _withdraw(msg.sender, to, underlyingAmount, shareAmount);
     }
 
     /// @notice Withdraw a specific amount of shares for underlying tokens on behalf of `from`.
     /// @param from The address to redeem shares from.
     /// @param to The address to receive underlying tokens corresponding to the withdrawal.
-    /// @param shareAmount The amount of shares to redeem for underlying tokens.
-    function withdrawFrom(address from, address to, uint256 shareAmount) external virtual returns (uint256 underlyingAmount) {
+    /// @param underlyingAmount The amount of underlying to claim by redeeming shares.
+    function withdrawFrom(address from, address to, uint256 underlyingAmount) external virtual returns (uint256 shareAmount) {
+        shareAmount = calculateShares(underlyingAmount);
         if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= shareAmount;
         }
-        return _withdraw(from, to, shareAmount);
+        _withdraw(from, to, underlyingAmount, shareAmount);
     }
 
-    function _withdraw(address from, address to, uint256 underlyingAmount) internal returns (uint256 shares) {
-        shares = calculateShares(underlyingAmount);
+    function _withdraw(address from, address to, uint256 underlyingAmount, uint256 shareAmount) internal {
 
         // Determine the equivalent amount of shares and burn them.
         // This will revert if the user does not have enough shares.
-        _burn(from, shares);
+        _burn(from, shareAmount);
 
         emit Withdraw(from, to, underlyingAmount);
 
@@ -113,7 +115,8 @@ contract ERC4626Vault is ERC20 {
     /// @param to The address to receive underlying tokens corresponding to the withdrawal.
     /// @param shareAmount The amount of shares to redeem for underlying tokens.
     function redeem(address to, uint256 shareAmount) external virtual returns (uint256 underlyingAmount) {
-        return _redeem(msg.sender, to, shareAmount);
+        underlyingAmount = calculateUnderlying(shareAmount);
+        _withdraw(msg.sender, to, underlyingAmount, shareAmount);
     }
 
     /// @notice Redeem a specific amount of shares for underlying tokens.
@@ -124,23 +127,9 @@ contract ERC4626Vault is ERC20 {
         if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= shareAmount;
         }
-        return _redeem(from, to, shareAmount);
-    }
-
-    function _redeem(address from, address to, uint256 shareAmount) internal returns (uint256 underlyingAmount) {
-        // Determine the equivalent amount of underlying tokens.
         underlyingAmount = calculateUnderlying(shareAmount);
 
-        // Burn the provided amount of shares.
-        // This will revert if the user does not have enough shares.
-        _burn(from, shareAmount);
-
-        emit Withdraw(from, to, underlyingAmount);
-
-        // Withdraw from strategies if needed and transfer.
-        beforeWithdraw(underlyingAmount);
-
-        underlying.safeTransfer(to, underlyingAmount);
+        _withdraw(from, to, underlyingAmount, shareAmount);
     }
 
     function beforeWithdraw(uint256 underlyingAmount) internal virtual {}
@@ -155,7 +144,7 @@ contract ERC4626Vault is ERC20 {
     /// @param user The user to get the underlying balance of.
     /// @return The user's Vault balance in underlying tokens.
     function balanceOfUnderlying(address user) external view returns (uint256) {
-        return balanceOf[user].fmul(exchangeRate(), baseUnit);
+        return calculateUnderlying(balanceOf[user]);
     }
 
     function calculateShares(uint256 underlyingAmount) public view returns (uint256) {
